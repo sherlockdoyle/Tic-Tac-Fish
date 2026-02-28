@@ -1,0 +1,168 @@
+<section class="controls">
+  <fieldset>
+    <legend>Game Configuration</legend>
+    <div class="row wrap">
+      <div class="row">
+        <label>
+          <span>Board Size</span>
+          <input type="number" [(ngModel)]="N" (change)="updateConfig()" min="3" max="15" required />
+        </label>
+        <label>
+          <span>Win Condition</span>
+          <input type="number" [(ngModel)]="K" (change)="updateConfig()" min="3" [max]="N" required />
+        </label>
+      </div>
+      <div class="row">
+        <div class="col grow">
+          <label>
+            <input type="checkbox" [(ngModel)]="connect4" (change)="updateConfig()" /><span>Connect 4</span>
+          </label>
+          <button [class]="settingUp ? 'primary' : 'secondary'" (click)="onSetup()">
+            @if (settingUp) {
+              Don<u>e</u>
+            } @else {
+              S<u>e</u>tup
+            }
+          </button>
+        </div>
+        <button class="destructive" (click)="reset()"><u>R</u>eset</button>
+      </div>
+    </div>
+    <div class="row wrap">
+      <div class="row">
+        <label>
+          <span>AI Ratio</span>
+          <input type="number" [(ngModel)]="nnRatio" (change)="updateNNRatio()" min="0" max="1" step="0.01" />
+        </label>
+        <div class="col">
+          <label>
+            <input type="checkbox" [(ngModel)]="updateAIRatio" /><span><u>U</u>pdate AI Ratio</span>
+          </label>
+          <label>
+            <input type="checkbox" [(ngModel)]="trainAI" /><span><u>T</u>rain AI</span>
+          </label>
+        </div>
+      </div>
+      <div class="row">
+        <div class="col">
+          <label>
+            <input type="checkbox" [(ngModel)]="showScoremap" /><span>Show <u>S</u>coremap</span>
+          </label>
+          <label> <input type="checkbox" [(ngModel)]="autoAI" /><span>Auto AI</span></label>
+        </div>
+        <div class="col right">
+          <em>AI LR: {{ engine.nn.lr.toFixed(3) }}</em>
+          <button class="secondary highlight" (click)="runAnalysis()">Run <u>A</u>nalysis</button>
+        </div>
+      </div>
+    </div>
+  </fieldset>
+
+  <button #menuTrigger class="tertiary" popovertarget="menu" title="More Options">
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+      <circle cx="12" cy="4" r="3" />
+      <circle cx="12" cy="12" r="3" />
+      <circle cx="12" cy="20" r="3" />
+    </svg>
+  </button>
+  <nav #menu id="menu" popover [alignPopover]="menuTrigger" (click)="menu.hidePopover()">
+    <ul>
+      <li>
+        <button class="secondary" (click)="undoMove()" title="Undo the last move">Undo</button>
+      </li>
+      <li>
+        <button class="secondary" (click)="flipBoard()" title="Flip the board">Flip board</button>
+      </li>
+      <li>
+        <button class="secondary" (click)="load3_3AI()" title="Load the pretrained 3x3 AI">Load 3x3 AI</button>
+      </li>
+      <li>
+        <button class="secondary" (click)="downloadWeights()" title="Download the current weights">
+          Download weights
+        </button>
+      </li>
+      <li>
+        <button class="secondary" (click)="uploadWeights()" title="Upload and load new weights">Upload weights</button>
+      </li>
+      <li>
+        <button class="secondary" (click)="saveToLS()" title="Save the current weights to local storage">
+          Save to local storage
+        </button>
+      </li>
+      <li>
+        <button
+          class="secondary"
+          (click)="loadFromLS()"
+          title="Load weights for the current size, if present, from local storage"
+        >
+          Load from local storage
+        </button>
+      </li>
+    </ul>
+  </nav>
+</section>
+
+@let winner = getWinner();
+<section
+  class="info"
+  [class]="
+    settingUp ? {} : { bold: winner, success: winner && winner[0] !== 'Draw', warning: winner && winner[0] === 'Draw' }
+  "
+>
+  @if (settingUp) {
+    Click on cells to place, toggle, or remove pieces. Click 'Done' once done.
+  } @else if (winner) {
+    @if (winner[0] === 'Draw') {
+      Draw!
+    } @else {
+      <span class="player" [attr.data-player]="winner[0]">{{ winner[0] }}</span> wins!
+      @if (trainAI) {
+        AI trains automatically.
+      }
+    }
+    <span class="muted">Reset the game or setup a new one.</span>
+  } @else {
+    @let currentPlayer = getCurrentPlayer();
+    <button class="player" [attr.data-player]="currentPlayer" (click)="flipPlayer()">{{ currentPlayer }}</button> to
+    play.
+    <span class="muted"
+      >Click on the {{ currentPlayer }} to flip the player.{{
+        engine.isEmpty() ? " Click 'Setup' to set the board to any state." : ''
+      }}</span
+    >
+  }
+</section>
+
+<section class="board">
+  <section class="analysis">
+    <strong>Analysis:</strong>
+    @if (analysis) {
+      Depth: {{ analysis.depth }}, Moves: {{ analysis.pv }}
+    } @else {
+      ...
+    }
+  </section>
+
+  <div class="grid" [style.--n]="N">
+    @let scoremap = showScoremap && !settingUp && !winner ? getScoremap() : [];
+    @let lastMove = engine.moves.at(-1);
+    @for (c of getBoard(); track $index) {
+      @let score = scoremap[$index];
+      @let bestMove = analysis?.bestMove === $index;
+      <button
+        [attr.data-cell]="c"
+        [class]="{ winning: winner?.[1]?.has($index), bestMove }"
+        [style.--score]="score"
+        [title]="(score || score === 0 ? `Score: ${score.toFixed(2)}` : '') + (bestMove ? ' (Best move)' : '')"
+        (click)="makeMove($index)"
+        [disabled]="!settingUp && (c || winner)"
+        [aria-label]="c || 'Empty'"
+      >
+        <span class="index" [class.star-point]="starPoints.has($index)">{{ $index }}</span>
+        @if (lastMove === $index) {
+          <div class="lastMove" title="Last move"></div>
+        }
+      </button>
+    }
+  </div>
+</section>

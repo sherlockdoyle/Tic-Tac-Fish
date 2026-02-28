@@ -1,1 +1,69 @@
-/* You can add global styles to this file, and also import other style files */
+:root {
+  color-scheme: light dark;
+
+  --bg: light-dark(oklch(98% 0.01 250), oklch(16% 0.02 255));
+  --fg: light-dark(oklch(22% 0.02 255), oklch(94% 0.01 255));
+
+  --accent: light-dark(oklch(62% 0.14 255), oklch(74% 0.13 255));
+
+  --success: light-dark(oklch(64% 0.12 150), oklch(74% 0.11 150));
+  --warning: light-dark(oklch(74% 0.12 85), oklch(78% 0.11 85));
+  --error: light-dark(oklch(62% 0.14 25), oklch(72% 0.13 25));
+
+  --fg-muted: color-mix(in oklch, var(--fg) 75%, var(--bg));
+  --surface: color-mix(in oklch, var(--bg) 92%, var(--fg) 8%);
+  --surface-2: color-mix(in oklch, var(--bg) 86%, var(--fg) 14%);
+  --border: color-mix(in oklch, var(--fg) 16%, var(--bg));
+  --shadow: color-mix(in oklch, black 18%, transparent);
+  --overlay: color-mix(in oklch, black 35%, transparent);
+
+  --ring: color-mix(in oklch, var(--accent) 55%, transparent);
+
+  --action-bg: var(--accent);
+  --action-fg: oklch(12% 0 0);
+  --action-hover: color-mix(in oklch, var(--accent) 88%, var(--bg));
+  --action-active: color-mix(in oklch, var(--accent) 78%, var(--bg));
+
+  --action-soft: color-mix(in oklch, var(--accent) 15%, var(--bg));
+  --action-soft-hover: color-mix(in oklch, var(--accent) 20%, var(--bg));
+  --action-soft-active: color-mix(in oklch, var(--accent) 25%, var(--bg));
+
+  --input-bg: var(--surface);
+  --input-border: var(--border);
+  --input-border-hover: color-mix(in oklch, var(--border) 55%, var(--fg) 45%);
+  --input-border-focus: var(--accent);
+}
+
+html,
+body {
+  margin: 0;
+  background-color: var(--bg);
+  padding: 0;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  color: var(--fg);
+  line-height: 1.6;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    Arial,
+    sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  transition: all 0.2s ease;
+  box-sizing: border-box;
+}
+
+button,
+input {
+  &:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}
