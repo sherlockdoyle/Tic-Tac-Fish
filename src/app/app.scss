@@ -23,6 +23,11 @@ header {
     line-height: 1;
   }
 
+  .actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+
   a {
     display: inline-flex;
     justify-content: center;
