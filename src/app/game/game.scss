@@ -316,6 +316,11 @@
     width: 100%;
     max-width: min(var(--n) * 10rem, 100%, 90dvh);
 
+    @media (max-width: 640px) {
+      gap: calc(0.25rem * 12 / (var(--n) + 9));
+      padding: calc(0.3rem * 12 / (var(--n) + 9));
+    }
+
     button {
       --s: var(--score, 0);
       --pos-mag: max(0, var(--s));

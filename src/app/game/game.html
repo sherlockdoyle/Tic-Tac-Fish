@@ -15,7 +15,7 @@
       <div class="row">
         <div class="col grow">
           <label>
-            <input type="checkbox" [(ngModel)]="connect4" (change)="updateConfig()" /><span>Connect 4</span>
+            <input type="checkbox" [(ngModel)]="connect4" (change)="makeConnect4()" /><span>Connect 4</span>
           </label>
           <button [class]="settingUp ? 'primary' : 'secondary'" (click)="onSetup()">
             @if (settingUp) {
@@ -48,11 +48,15 @@
           <label>
             <input type="checkbox" [(ngModel)]="showScoremap" /><span>Show <u>S</u>coremap</span>
           </label>
-          <label> <input type="checkbox" [(ngModel)]="autoAI" /><span>Auto AI</span></label>
+          <label>
+            <input type="checkbox" [(ngModel)]="autoAI" /><span>
+              Auto AI <small>({{ getNumSteps() }} steps)</small>
+            </span>
+          </label>
         </div>
         <div class="col right">
           <em>AI LR: {{ engine.nn.lr.toFixed(3) }}</em>
-          <button class="secondary highlight" (click)="runAnalysis()">Run <u>A</u>nalysis</button>
+          <button class="secondary highlight" (click)="runAnalysis(true)">Run <u>A</u>nalysis</button>
         </div>
       </div>
     </div>
@@ -149,20 +153,22 @@
     @for (c of getBoard(); track $index) {
       @let score = scoremap[$index];
       @let bestMove = analysis?.bestMove === $index;
-      <button
-        [attr.data-cell]="c"
-        [class]="{ winning: winner?.[1]?.has($index), bestMove }"
-        [style.--score]="score"
-        [title]="(score || score === 0 ? `Score: ${score.toFixed(2)}` : '') + (bestMove ? ' (Best move)' : '')"
-        (click)="makeMove($index)"
-        [disabled]="!settingUp && (c || winner)"
-        [aria-label]="c || 'Empty'"
-      >
-        <span class="index" [class.star-point]="starPoints.has($index)">{{ $index }}</span>
-        @if (lastMove === $index) {
-          <div class="lastMove" title="Last move"></div>
-        }
-      </button>
+      @if (!connect4 || $index >= N) {
+        <button
+          [attr.data-cell]="c"
+          [class]="{ winning: winner?.[1]?.has($index), bestMove }"
+          [style.--score]="score"
+          [title]="(score || score === 0 ? `Score: ${score.toFixed(2)}` : '') + (bestMove ? ' (Best move)' : '')"
+          (click)="makeMove($index)"
+          [disabled]="!settingUp && (c || winner)"
+          [aria-label]="c || 'Empty'"
+        >
+          <span class="index" [class.star-point]="starPoints.has($index)">{{ $index }}</span>
+          @if (lastMove === $index) {
+            <div class="lastMove" title="Last move"></div>
+          }
+        </button>
+      }
     }
   </div>
 </section>

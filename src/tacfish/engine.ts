@@ -124,9 +124,10 @@ export class Engine {
   }
 
   /**
-   * Return the lowest empty row in the column of the given pos; as if the move fell down.
+   * Return the lowest empty row in the column of the given pos; as if the move fell down. Returns negative if the
+   * column is full.
    */
-  private getGravitizedPos(pos: Pos): Pos {
+  public getGravitizedPos(pos: Pos): Pos {
     if (!this.connect4) return pos;
 
     const shift = BigInt(this.N * 2);
@@ -143,7 +144,7 @@ export class Engine {
       else break;
       tmpBoard >>= shift;
     }
-    // col < this.N, if topEmptyRow === -1, then topEmptyRow * this.N + col < 0, so the result will be negative, which we check in makeMove
+    // col < this.N, if topEmptyRow === -1, then topEmptyRow * this.N + col < 0, so the result will be negative
     return topEmptyRow * this.N + col;
   }
 
@@ -153,8 +154,7 @@ export class Engine {
   }
 
   makeMove(pos: Pos, player: Player): boolean {
-    pos = this.getGravitizedPos(pos);
-    if (pos < 0) return false;
+    if (!this.isValidPosInConnect4(pos)) return false;
 
     const p = BigInt(pos * 2);
     if (((this.#bitboard >> p) & CELL_MASK) === CELL_EMPTY) {
@@ -296,19 +296,22 @@ export class Engine {
     let score = 0;
     for (const [start, delta] of this.#allLines) {
       let numPlayer = 0,
-        numOpponent = 0;
+        numOpponent = 0,
+        floating = 0;
       for (let i = 0; i < this.K; ++i) {
-        const cell = (this.#bitboard >> BigInt((start + i * delta) * 2)) & CELL_MASK;
+        const pos = start + i * delta;
+        const cell = (this.#bitboard >> BigInt(pos * 2)) & CELL_MASK;
         if (cell === player) ++numPlayer;
-        if (cell === opponent) ++numOpponent;
+        else if (cell === opponent) ++numOpponent;
+        else if (!this.isValidPosInConnect4(pos)) ++floating;
       }
 
       // check winner
       if (numPlayer === this.K) return SCORE_WIN;
       if (numOpponent === this.K) return SCORE_LOSS;
 
-      if (numOpponent === 0 && numPlayer) score += 5 ** numPlayer;
-      else if (numPlayer === 0 && numOpponent) score -= 5 ** numOpponent;
+      if (numOpponent === 0 && numPlayer) score += 5 ** numPlayer / 2 ** floating;
+      else if (numPlayer === 0 && numOpponent) score -= 5 ** numOpponent / 2 ** floating;
     }
 
     return Math.tanh(score * 5 ** (1 - this.K)); // scale to NN range (-1 to 1)
@@ -446,9 +449,9 @@ export class Engine {
     return pv;
   }
 
-  doWork(player: Player): Analysis & { depth: number; pv: Pos[] } {
+  doWork(player: Player, getPV: boolean = false): Analysis & { depth: number; pv?: Pos[] } {
     const result = this.negamax(this.#curDepth, -Infinity, Infinity, player);
-    return { ...result, depth: this.#curDepth++, pv: this.getPV(player) };
+    return { ...result, depth: this.#curDepth++, pv: getPV ? this.getPV(player) : undefined };
   }
 
   private getBoardForNN(player: Player): Int8Array {
@@ -517,7 +520,7 @@ export class Engine {
 
 // Sample training code
 // function main() {
-//   const engine = new Engine(15, 5);
+//   const engine = new Engine(3, 3);
 
 //   let eps = 0.5;
 //   for (let _ = 0; _ < 5000; ++_) {
@@ -527,6 +530,7 @@ export class Engine {
 //     let currentPlayer: Player = Math.random() < 0.5 ? CELL_O : CELL_X;
 //     while (!(engine.isFull() || engine.checkWinner())) {
 //       if (Math.random() < eps) {
+//         engine.doWork(currentPlayer);
 //         const result = engine.doWork(currentPlayer);
 //         engine.makeMove(result.bestMove!, currentPlayer);
 //       } else {
@@ -538,19 +542,12 @@ export class Engine {
 //       currentPlayer = (currentPlayer ^ CELL_MASK) as Player;
 //     }
 
-//     engine.trainNN();
+//     engine.trainNN(engine.checkWinner());
 //     if (eps > 0.1) eps *= 0.9995;
 //   }
 
-//   // console.log(
-//   //   JSON.stringify(engine.nn.getWeights(), (_, v) =>
-//   //     typeof v === 'number' ? Number(v.toFixed(5)) : v,
-//   //   ),
-//   // );
+//   console.log(
+//     JSON.stringify(Array.from(engine.nn.getWeights()), (_, v) => (typeof v === 'number' ? Number(v.toFixed(5)) : v)),
+//   );
 // }
 // main();
-// const e = new Engine(3, 3);
-// e.makeMove(0, CELL_O);
-// e.makeMove(1, CELL_O);
-// e.makeMove(2, CELL_O);
-// console.log(e.checkWinner())

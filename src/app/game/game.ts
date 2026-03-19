@@ -53,6 +53,13 @@ export class Game {
 
     this.analysis = null;
   }
+  makeConnect4() {
+    if (this.connect4) {
+      this.N = 7;
+      this.K = 4;
+    }
+    this.updateConfig();
+  }
   updateNNRatio() {
     this.nnRatio = Math.round(Math.max(0, Math.min(this.nnRatio, 1)) * 100) / 100;
     this.engine.nnRatio = this.nnRatio;
@@ -108,11 +115,11 @@ export class Game {
     if (key === 'u') this.updateAIRatio = !this.updateAIRatio;
     if (key === 't') this.trainAI = !this.trainAI;
     if (key === 's') this.showScoremap = !this.showScoremap;
-    if (key === 'a') this.runAnalysis();
+    if (key === 'a') this.runAnalysis(true);
     if (key === ' ' && this.analysis?.bestMove != null) this.makeMove(this.analysis.bestMove);
   }
-  runAnalysis() {
-    this.analysis = this.engine.doWork(this.currentPlayer);
+  runAnalysis(getPV: boolean = false) {
+    this.analysis = this.engine.doWork(this.currentPlayer, getPV);
   }
 
   flipPlayer() {
@@ -125,13 +132,16 @@ export class Game {
 
   makeMove(pos: number) {
     if (this.settingUp) this.engine.togglePos(pos);
-    else if (this.engine.makeMove(pos, this.currentPlayer)) {
-      // A move will be made even if the game is over, but we disable the board, so it doesn't matter. Moreover, this is demo, not a real game, so making extra moves to analyze the AI is fine.
-      if (this.trainAI) this.trainIfOver(pos);
+    else {
+      const actualPos = this.engine.getGravitizedPos(pos);
+      if (actualPos >= 0 && this.engine.makeMove(actualPos, this.currentPlayer)) {
+        // A move will be made even if the game is over, but we disable the board, so it doesn't matter. Moreover, this is demo, not a real game, so making extra moves to analyze the AI is fine.
+        if (this.trainAI) this.trainIfOver(actualPos);
 
-      this.flipPlayer();
+        this.flipPlayer();
 
-      this.makeAIMove(pos);
+        this.makeAIMove(actualPos);
+      }
     }
 
     this.engine.resetSearch();
@@ -144,7 +154,7 @@ export class Game {
       !this.engine.checkWinner() &&
       !this.engine.isFull()
     ) {
-      for (let i = 0, l = this.connect4 ? 6 : 2; i < l; ++i) {
+      for (let i = 0, l = this.getNumSteps(); i < l; ++i) {
         await yieldToMain();
         this.runAnalysis();
       }
@@ -163,6 +173,11 @@ export class Game {
     this.analysis = null;
   }
 
+  getNumSteps(): number {
+    let numSteps = 25.3125 / this.N + 0.0625; // this formula was experimentally derived to give the most number of steps for different board sizes under a reasonable time
+    if (this.connect4) numSteps *= 2;
+    return Math.round(numSteps);
+  }
   getBoard(): string[] {
     return this.engine.board.map(playerToString);
   }
