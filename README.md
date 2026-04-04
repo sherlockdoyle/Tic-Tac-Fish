@@ -70,85 +70,139 @@ Later on, I also added Connect-4. The game is pretty similar, so adding it didn'
 
 ## How?
 
-The codebase is built using Angular and TypeScript. The underlying engine operates efficiently by packing board states into integers using bitwise math, relying on a basic neural network for dynamic evaluation, and utilizing a custom algorithm for quantization.
+The codebase is built using Angular and TypeScript. The underlying engine operates efficiently by packing board states into integers using bitwise math, relying a dynamic neural network for positional evaluation, and utilizing a custom algorithm for quantization. The detailed mechanics are described below, allowing the engine logic to be fully reproduced.
 
-### Bitboard State Representation
+### Game State and Engine
 
-To ensure the AI tree searches run fast, the board state is packed mathematically rather than using objects or multidimensional arrays. Each cell on the grid takes up 2 bits, representing Empty (`0b00`), X (`0b01`), or O (`0b10`).
+The core game logic relies on three primary parameters:
+* $N$: The size of the $N \times N$ grid.
+* $K$: The required consecutive pieces to win.
+* `connect4`: A boolean modifying the rules. If true, pieces fall to the lowest empty row in the selected column. Connect 4 functionally hides the top row (row 0), operating on an $N \times (N-1)$ visible grid.
 
-Rather than using a fixed 64-bit integer—which would cap the grid size to 32 cells (a roughly 5x5 board)—the game leverages JavaScript's `BigInt` capability. The total number of bits required to store the board is $2 \times N^2$, where $N$ is the board size. A 15x15 board utilizes 450 bits, safely maintained within a single BigInt.
+To ensure extreme performance during tree search, the board state is packed mathematically rather than using objects or arrays. Each cell requires 2 bits to represent its state:
+* Empty: `0b00` ($0$)
+* Player X: `0b01` ($1$)
+* Player O: `0b10` ($2$)
 
-Positions are read or toggled using simple shifts and masks. For a position $pos$, the bits can be extracted by shifting the board down by $pos \times 2$:
+To store the entire grid, a single JavaScript `BigInt` (referred to as a `bitboard`) is used, consuming exactly $2N^2$ bits. By avoiding a fixed 64-bit integer constraint, the engine seamlessly scales to large grids (e.g., $15 \times 15$ requires 450 bits).
+
+**Reading and Writing State:**
+The state of a cell at a specific $pos$ (where $pos \in [0, N^2 - 1]$) is located at bit offset $pos \times 2$. To extract a cell:
 ```typescript
-const p = BigInt(pos * 2);
-const cell = (bitboard >> p) & CELL_MASK;
+const shift = BigInt(pos * 2);
+const cell = (bitboard >> shift) & 0b11n; // 0b11n is CELL_MASK
+```
+Setting a cell for a `player` involves a bitwise OR, assuming the cell is currently empty:
+```typescript
+bitboard |= player << shift;
+```
+Removing a piece is achieved via a bitwise AND with a negated mask:
+```typescript
+bitboard &= ~(0b11n << shift);
 ```
 
 ### Winner Calculation via Bitwise Operations
 
-Finding a winner isn't done by slowly crawling through loops checking adjacent cells. Instead, winning lines are found by applying consecutive bitwise shifts.
+Checking for a winner is executed globally across the entire board simultaneously using consecutive bitwise shifts and AND operations, bypassing slow loops.
 
-To check if there are $K$ pieces in a row horizontally, the board is repeatedly bitwise AND-ed with itself, shifted by $2$ bits (one cell to the right). If there are $K$ consecutive pieces, the specific bit segment will survive $K-1$ shifts.
-For vertical wins, the shift is $2 \times N$ bits (one entire row).
-For diagonals and anti-diagonals, the shifts are $2 \times N + 2$ and $2 \times N - 2$, respectively.
+To search for $K$ consecutive pieces, the board is iteratively AND-ed with a shifted version of itself. If $K$ consecutive bits exist in a target direction, those specific bits will survive $K-1$ shifts.
 
-Since Connect 4 boards logically "wrap" in memory but not physically, edge cases crossing row boundaries are handled by masking out the specific columns during the shift step:
+The necessary bit shifts for a grid of size $N$ are:
+* **Horizontal (`hShift`)**: $2$ bits (1 cell right)
+* **Vertical (`vShift`)**: $2N$ bits (1 row down)
+* **Diagonal (`dShift`)**: $2N + 2$ bits (1 row down, 1 cell right)
+* **Anti-Diagonal (`adShift`)**: $2N - 2$ bits (1 row down, 1 cell left)
+
+Because the $1$D bitboard logically wraps from the end of one row to the beginning of the next, horizontal and diagonal shifts must not "bleed" across row boundaries. This is prevented using column masks:
+* `colMask`: A mask with `0b11` at every cell in column 0.
+* `leftMask`: `~colMask`. Used to clear bits that wrap from the left edge.
+* `rightMask`: `~(colMask << adShift)`. Used to clear bits that wrap from the right edge.
+
+**Example Algorithm:**
+For a given player, their isolated board is isolated using a player mask. Then, the $K-1$ iterations look like this:
 ```typescript
-const rightMask = ~(colMask << adShift);
-h &= (h >> 2n) & rightMask; // Shift horizontally, mask out the jump to the next row
+let h = board, v = board, d = board, ad = board;
+
+for (let i = 1; i < K && (h || v || d || ad); ++i) {
+    h &= (h >> hShift) & rightMask;
+    v &= (v >> vShift);
+    d &= (d >> dShift) & rightMask;
+    ad &= (ad >> adShift) & leftMask;
+}
+if (h || v || d || ad) return true; // Winner found
 ```
+If any bits remain non-zero in `h`, `v`, `d`, or `ad` after the loop, a winning line of $K$ exists.
 
-### Move Sorting Optimization
+### Search Algorithm: Negamax and Transposition Table
 
-During a depth-first search like Negamax, investigating the strongest moves early dramatically improves the efficiency of Alpha-Beta pruning, as it forces earlier cutoffs on worse branches.
+The core search engine uses **Negamax** with **Alpha-Beta pruning**. Negamax simplifies Minimax by recognizing that $\max(a, b) = -\min(-a, -b)$, calculating the board score strictly from the perspective of the current player.
 
-When generating a list of legal moves, the engine prioritizes:
-1. **The TT Best Move**: If a previous partial search found a best move, it is always considered first.
-2. **Neighbors**: Cells adjacent to an already placed piece are highly preferred. To find adjacent cells extremely quickly across the entire board, the engine "smears" the occupied bits horizontally by shifting them right and left, and then vertically shifting that result. All cells caught in the "smear" are prioritized.
-3. **Distance to Center**: Before the game begins, all coordinates on the board are pre-sorted based on their geometric distance to the center of the board, using $(x - center)^2 + (y - center)^2$. This naturally biases play towards controlling the center.
+**Transposition Table (TT)**
+Because different move orders lead to identical board configurations, a TT caches evaluations to prevent redundant work.
+The TT uses the full $2N^2$-bit `bitboard` as the key. Each entry stores:
+* `depth`: The remaining depth searched from this node.
+* `score`: The evaluated score.
+* `flag`: Indicates if the score is exact (`exact`), bounded from below due to an alpha cutoff (`lower`), or bounded from above due to failing to exceed alpha (`upper`).
+* `bestMove`: The optimal move found, crucial for extracting the **Principal Variation (PV)** (the optimal predicted move sequence).
+
+**Move Sorting Optimizations**
+Alpha-Beta pruning is exponentially faster when it evaluates the strongest moves first. Move generation generates a legal move array prioritizing:
+1. **TT Best Move**: If the TT recorded a `bestMove` for the current state in a previous shallower search, it is checked first.
+2. **Adjacent Neighbors**: Moves immediately adjacent to an existing piece are investigated next. To find all neighbors instantaneously without loops, the engine utilizes a bitwise "smear".
+   First, all occupied pieces (`occ`) are smeared horizontally to create `hSmear`:
+   `hSmear = occ | ((occ & rightMask) << hShift) | ((occ & leftMask) >> hShift)`
+   Then, `hSmear` is smeared vertically to identify all adjacent cells:
+   `neighbors = hSmear | (hSmear << vShift) | (hSmear >> vShift)`
+3. **Distance to Center**: Before the game begins, all board positions are pre-sorted based on their geometric squared distance to the center: $(x - center)^2 + (y - center)^2$. If a cell isn't a neighbor, it falls back to this ordering, inherently prioritizing central control.
 
 ### Heuristic Evaluation
 
-When the search stops and a definitive win is not found, the static heuristic assesses the raw strength of the board configuration. The heuristic iterates through all valid horizontal, vertical, and diagonal lines of length $K$.
+When the Negamax search hits its maximum depth without finding a terminal state (win/loss/draw), it relies on a static heuristic function. The engine isolates every possible winning line (rows, columns, diagonals of length $K$) and evaluates them independently.
 
-If a line has a mix of X and O pieces, it's considered "blocked" and scores $0$.
-If a line is uncontested (contains pieces for only one player and empty spaces), it is scored using an exponential formula that heavily rewards nearing a full connection, while penalizing lines with pieces that are "floating" (empty spaces requiring multiple moves in Connect 4 to fill underneath):
+If a line is blocked (contains pieces from both players), it scores $0$.
+If a line is uncontested (contains $num$ pieces of the current player and empty spaces), it is evaluated. For Connect 4 mode, empty spaces are further categorized. An empty space is "floating" if the space immediately below it is also empty, meaning it cannot be played in immediately.
 
+The base line score ($S$) is calculated as:
 $$ S = \frac{5^{num}}{2^{floating}} $$
+This exponentially rewards lines closer to completion, while heavily penalizing lines requiring multiple setup moves in Connect 4.
 
-**Modifiers to the line score:**
-* If $num = K - 1$ and there are no floating pieces, a player is 1 step away from an immediate win.
-* In Tic Tac Toe, this threat is tripled: $S = S \times 3$.
-* In Connect 4, a parity check is applied. Because pieces can only be played from the bottom up, an empty space on an *even* row from the bottom behaves very differently than an odd row depending on whose turn it is. If the row alignment matches the first-player advantage, the score is doubled: $S = S \times 2$. Otherwise, it gets a smaller bump: $S = S \times 1.25$.
+**Threat Modifiers**
+If a player is one move away from a win ($num = K - 1$) and the winning cell is not floating ($floating = 0$), the threat is imminent.
+* In standard mode, the threat score is drastically scaled: $S = S \times 3$.
+* In Connect 4 mode, the multiplier depends on the parity of the empty cell's row. In Connect 4, due to the alternating turn structure, a threat on an odd row strongly favors the first player, while a threat on an even row favors the second player. If the empty cell's row parity aligns with the player's turn advantage, the threat is highly lethal and multiplied by $2$. Otherwise, it is only multiplied by $1.25$.
 
-The raw board score is a sum of these line evaluations. It is then normalized and squeezed into a $[-1, 1]$ range using a hyperbolic tangent to match the range of the neural network:
-$$ Score_{final} = \tanh\left(\frac{S_{total}}{5^{K - 0.25}}\right) $$
+Finally, the heuristic sums the scores of all lines for the current player, subtracts the sum of the opponent's lines, and squashes the result into the $[-1, 1]$ range using a hyperbolic tangent. To align the scale properly with $K$, a fractional constant is used:
+$$ Score_{final} = \tanh\left(\frac{Score_{total}}{5^{K - 0.25}}\right) $$
 
-### Transposition Table & Search Details
+### Neural Network Integration
 
-A Transposition Table (TT) caches explored board states so they aren't recalculated.
-The TT stores:
-* The depth evaluated.
-* The score.
-* The flag indicating what the score represents (`exact` if fully evaluated, `lower` if a cut-off occurred causing a lower bound, and `upper` for an upper bound).
-* The best move found (used to extract the Principal Variation or PV).
+Because the static mathematical heuristic struggles with long-term positional sacrifices, a lightweight multi-layer perceptron (Neural Network) runs in tandem.
 
-### Neural Network (NN) Integration
+**Architecture Details:**
+1. **Input Canonicalization**: The input layer has $N^2$ nodes. Each cell is mapped to $1$ (current player), $-1$ (opponent), or $0$ (empty). To vastly reduce the required training time, the input board is canonicalized. The engine generates all 8 mathematical symmetries of the board (rotations of 90, 180, 270 degrees, plus horizontal, vertical, and diagonal reflections). The symmetry that forms the numerically smallest binary value is fed into the network.
+2. **Hidden Layer**: A single hidden layer utilizes a Leaky ReLU activation function ($\alpha = 0.01$). The size of this layer dynamically adjusts based on the complexity of the grid using the formula: $\max(32, 2^{\lfloor \log_2(N^2 \times K) \rfloor})$.
+3. **Output Layer**: A single output node uses a $\tanh$ activation to predict the position's evaluation between $[-1, 1]$.
 
-The heuristic alone cannot fully grasp complex strategic setups or long-term sacrifices, so it is paired with a neural network.
+**Training via Self-Play:**
+The AI supports live online training. It records the sequences of states visited during a match. When the game ends with a terminal condition (win = $1$, loss = $-1$, draw = $0$), it creates training batches.
+The network updates its weights using Gradient Descent with Momentum. The gradients of the weights ($\nabla W$) are updated using:
+$$ V_t = \mu V_{t-1} - \eta \frac{1}{B} \sum_{b=1}^{B} \nabla W_b $$
+$$ W_{t+1} = W_t + V_t $$
+Where $\mu = 0.9$ (momentum), $\eta$ is the learning rate, and $B$ is the batch size.
 
-* **Inputs**: The raw board configuration. X is passed as $1$, O as $-1$, and Empty as $0$. To accelerate learning, the board is canonicalized by rotating and flipping it through all 8 mathematical symmetries and passing the numerically smallest resulting board. This ensures structurally identical setups aren't learned twice.
-* **Hidden Layer**: A single hidden layer using Leaky ReLU. The size dynamically scales up based on the inputs to ensure enough capacity for larger boards.
-* **Output**: A single value passed through $\tanh$, projecting evaluation on the $[-1, 1]$ spectrum.
-
-The network performs backpropagation using Gradient Descent. When a game completes, it takes the sequence of moves made and applies the win value to the loss function, shifting its weights and biases to more accurately score similar configurations in the future.
-
-The user interface slider allows a blend of standard math logic versus neural network learned logic:
+When generating moves in the application, the user controls an "AI Ratio" slider (from $0$ to $1$) to dictate what percentage of the evaluation is driven by the network versus the static heuristic:
 $$ Score_{blended} = Heuristic \times (1 - Ratio) + NN \times Ratio $$
 
-### String Quantization
+### AI Weight Quantization and Sharing
 
-Rather than saving or sharing massive raw arrays of 32-bit floats, the weights of the AI are quantized into heavily compressed strings.
-The system identifies the absolute minimum float and the maximum float in the network's layers. It then partitions this range into distinct slices based on the number of available printable characters in Unicode (`0x20` space up to `0xD800` surrogate ranges). This yields over $55,264$ distinct points of precision.
+To allow users to export the neural network's learned behavior without generating massive JSON arrays of 32-bit floats, the weights are subjected to a custom uniform quantization algorithm. The resulting compressed model is a compact Unicode string that can be easily shared or saved in local storage.
 
-Each weight is converted into an integer index representing its "slice" and mapped to the corresponding Unicode character. A small header packs the `min` and `step` floats into the string, allowing rapid decompression when importing a saved model.
+The standard printable Unicode characters range from `0x20` (Space) up to `0xD800` (the start of the surrogate pairs). This yields a `RANGE` of exactly $55,264$ distinct integer values per character.
+
+The algorithm calculates the global minimum (`min`) and maximum (`max`) of the entire weight array and determines a fixed scaling `step`:
+$$ step = \frac{max - min}{RANGE} $$
+
+Every floating-point weight $W_i$ is mapped into a base-55264 integer index, which is then mapped to its corresponding Unicode character:
+$$ Char_i = \text{String.fromCharCode}\left( \left\lfloor \frac{W_i - min}{step} \right\rfloor + \text{0x20} \right) $$
+
+To allow decompression later, the `min` and `step` values (two 32-bit floats) are packed into a single 64-bit header. That 64-bit integer is subsequently divided down by $55,264$ and written out as the first characters of the string. The rest of the string represents the array of weights.
