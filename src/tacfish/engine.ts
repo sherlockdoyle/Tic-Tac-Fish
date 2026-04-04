@@ -30,6 +30,7 @@ export class Engine {
   #colMask = 0n;
   #cellOrder: Uint8Array;
   #symmetries: Uint8Array;
+  #boardForNN: Int8Array;
 
   constructor(
     private readonly N: number = 3,
@@ -38,6 +39,7 @@ export class Engine {
     randomize = false,
   ) {
     this.nn = new NeuralNetwork(N, K);
+    this.#boardForNN = new Int8Array(N * N);
 
     this.generateAllLines();
 
@@ -343,7 +345,8 @@ export class Engine {
     return Math.tanh(score / 5 ** (this.K - 0.25)); // scale to NN range (-1 to 1)
   }
   private evaluateNN(player: Player): number {
-    return this.nn.forward(this.getBoardForNN(player));
+    this.setBoardForNN(player);
+    return this.nn.forward(this.#boardForNN);
   }
   evaluatePos(player: Player): number {
     if (this.nnRatio < 1e-5) return this.evaluateHeuristic(player);
@@ -441,18 +444,24 @@ export class Engine {
       if (alpha >= beta) break;
     }
 
+    const isUpperBound = bestScore <= originalAlpha;
     this.#tt.set(this.#bitboard, {
       depth,
       score: bestScore,
-      flag: bestScore <= originalAlpha ? 'upper' : bestScore >= beta ? 'lower' : 'exact',
-      bestMove,
+      flag: isUpperBound ? 'upper' : bestScore >= beta ? 'lower' : 'exact',
+      bestMove: isUpperBound ? undefined : bestMove,
     });
 
     return { score: bestScore, bestMove };
   }
 
-  resetSearch() {
-    this.#tt.clear();
+  /**
+   * Resets the transposition table and the current search depth
+   * @param force If true, completely clears the transposition table. Otherwise, only clears the unreachable branches.
+   */
+  resetSearch(force: boolean = false) {
+    if (force) this.#tt.clear();
+    else for (const key of this.#tt.keys()) if ((key & this.#bitboard) !== this.#bitboard) this.#tt.delete(key);
     this.#curDepth = 1;
   }
 
@@ -480,9 +489,11 @@ export class Engine {
     return { ...result, depth: this.#curDepth++, pv: getPV ? this.getPV(player) : undefined };
   }
 
-  private getBoardForNN(player: Player): Int8Array {
-    const l = this.N * this.N;
+  private setBoardForNN(player: Player) {
+    this.#boardForNN.fill(0);
+    if (this.#bitboard === 0n) return; // quick return
 
+    const l = this.N * this.N;
     // A board has 8 symmetries and we want them to be treated the same. We do this by canonicalizing the board - we
     // generate all symmetries of the board and then choose the smallest one.
     let minBoard = this.#bitboard;
@@ -497,15 +508,11 @@ export class Engine {
       minBoard = newBoard < minBoard ? newBoard : minBoard;
     }
 
-    const board = new Int8Array(l);
-    if (minBoard === 0n) return board; // quick return
-
     for (let i = 0; i < l && minBoard; ++i) {
       const cell = minBoard & CELL_MASK;
-      board[i] = cell === CELL_EMPTY ? 0 : cell === player ? 1 : -1;
+      this.#boardForNN[i] = cell === CELL_EMPTY ? 0 : cell === player ? 1 : -1;
       minBoard >>= 2n;
     }
-    return board;
   }
 
   // we can get the winner here too, but we pass it as a small speedup
@@ -520,7 +527,8 @@ export class Engine {
       const cell = ((tmpBoard >> p) & CELL_MASK) as Player;
       this.#bitboard |= cell << p;
 
-      boards.push(this.getBoardForNN(cell));
+      this.setBoardForNN(cell);
+      boards.push(this.#boardForNN.slice());
       targets.push(winner ? (winner === cell ? 1 : -1) : 0);
     }
 
