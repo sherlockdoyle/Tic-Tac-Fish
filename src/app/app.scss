@@ -48,6 +48,11 @@ header {
       transform: translateY(0);
     }
 
+    &.help {
+      font-size: 1.75rem;
+      font-family: Impact, Haettenschweiler, 'Arial Narrow Bold', sans-serif;
+    }
+
     svg {
       display: block;
       width: 1.75rem;
