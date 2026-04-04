@@ -70,59 +70,85 @@ Later on, I also added Connect-4. The game is pretty similar, so adding it didn'
 
 ## How?
 
-The codebase is built using Angular and TypeScript. The logic is separated into an AI engine, a basic neural network, and a quantization utility, while the visual layer handles the user interface.
+The codebase is built using Angular and TypeScript. The underlying engine operates efficiently by packing board states into integers using bitwise math, relying on a basic neural network for dynamic evaluation, and utilizing a custom algorithm for quantization.
 
-### Game State and Engine
+### Bitboard State Representation
 
-The game engine relies on a mathematical abstraction to stay fast. The parameters $N$ (grid size) and $K$ (win condition) define the rules. Connect 4 functions as a variant of the standard game, simply enforcing a "gravity" rule where placing a piece automatically falls to the lowest available space in that column.
+To ensure the AI tree searches run fast, the board state is packed mathematically rather than using objects or multidimensional arrays. Each cell on the grid takes up 2 bits, representing Empty (`0b00`), X (`0b01`), or O (`0b10`).
 
-To maintain extremely high performance during the deep analysis searches, the board state is packed into a 64-bit integer, known as a **bitboard**.
-Since a cell can be empty, an 'X', or an 'O', it requires two bits. This limits the maximum board size to $32$ cells using a single 64-bit integer. However, thanks to BigInt support in modern JavaScript, operations on the bitboard can scale up to larger sizes while remaining highly optimized using bitwise shifts and masks.
+Rather than using a fixed 64-bit integer—which would cap the grid size to 32 cells (a roughly 5x5 board)—the game leverages JavaScript's `BigInt` capability. The total number of bits required to store the board is $2 \times N^2$, where $N$ is the board size. A 15x15 board utilizes 450 bits, safely maintained within a single BigInt.
 
-Checking for a winner is accomplished elegantly through bitwise operations that scan the entire board for $K$ consecutive pieces horizontally, vertically, or diagonally in just a handful of iterations.
+Positions are read or toggled using simple shifts and masks. For a position $pos$, the bits can be extracted by shifting the board down by $pos \times 2$:
+```typescript
+const p = BigInt(pos * 2);
+const cell = (bitboard >> p) & CELL_MASK;
+```
 
-### Search Algorithm: Negamax and Transposition Table
+### Winner Calculation via Bitwise Operations
 
-The core search algorithm driving the AI is **Negamax**, a streamlined variant of Minimax. The Negamax algorithm recursively simulates future game states. It assumes both players are playing perfectly and attempts to maximize its own score while minimizing the opponent's.
+Finding a winner isn't done by slowly crawling through loops checking adjacent cells. Instead, winning lines are found by applying consecutive bitwise shifts.
 
-To prune the search tree and vastly improve performance, **Alpha-Beta pruning** is used. If a move is found to be worse than a previously examined move, the engine stops exploring that branch.
+To check if there are $K$ pieces in a row horizontally, the board is repeatedly bitwise AND-ed with itself, shifted by $2$ bits (one cell to the right). If there are $K$ consecutive pieces, the specific bit segment will survive $K-1$ shifts.
+For vertical wins, the shift is $2 \times N$ bits (one entire row).
+For diagonals and anti-diagonals, the shifts are $2 \times N + 2$ and $2 \times N - 2$, respectively.
 
-Because many different sequences of moves can lead to the exact same board state, evaluating the same state repeatedly would be wasteful. To solve this, a **Transposition Table (TT)** is employed. The bitboard state acts as a unique key for the TT, which caches the depth analyzed, the score, and the best move found.
-When checking the TT, the score can be an exact value, a lower bound, or an upper bound depending on whether Alpha-Beta pruning previously cut off the search.
+Since Connect 4 boards logically "wrap" in memory but not physically, edge cases crossing row boundaries are handled by masking out the specific columns during the shift step:
+```typescript
+const rightMask = ~(colMask << adShift);
+h &= (h >> 2n) & rightMask; // Shift horizontally, mask out the jump to the next row
+```
 
-When the search concludes, the optimal sequence of anticipated moves—the **Principal Variation (PV)**—is extracted by following the best moves cached in the Transposition Table.
+### Move Sorting Optimization
+
+During a depth-first search like Negamax, investigating the strongest moves early dramatically improves the efficiency of Alpha-Beta pruning, as it forces earlier cutoffs on worse branches.
+
+When generating a list of legal moves, the engine prioritizes:
+1. **The TT Best Move**: If a previous partial search found a best move, it is always considered first.
+2. **Neighbors**: Cells adjacent to an already placed piece are highly preferred. To find adjacent cells extremely quickly across the entire board, the engine "smears" the occupied bits horizontally by shifting them right and left, and then vertically shifting that result. All cells caught in the "smear" are prioritized.
+3. **Distance to Center**: Before the game begins, all coordinates on the board are pre-sorted based on their geometric distance to the center of the board, using $(x - center)^2 + (y - center)^2$. This naturally biases play towards controlling the center.
 
 ### Heuristic Evaluation
 
-When the search reaches its maximum depth limit before finding a definitive win or loss, it must estimate how favorable the position is. This is where the static heuristic evaluation function is used.
+When the search stops and a definitive win is not found, the static heuristic assesses the raw strength of the board configuration. The heuristic iterates through all valid horizontal, vertical, and diagonal lines of length $K$.
 
-The heuristic iterates over all possible winning lines on the board. For any line that contains only one player's pieces and empty spaces (meaning it could still become a winning line), it calculates a score based on how close it is to $K$ pieces.
+If a line has a mix of X and O pieces, it's considered "blocked" and scores $0$.
+If a line is uncontested (contains pieces for only one player and empty spaces), it is scored using an exponential formula that heavily rewards nearing a full connection, while penalizing lines with pieces that are "floating" (empty spaces requiring multiple moves in Connect 4 to fill underneath):
 
-The formula for evaluating a single line is:
 $$ S = \frac{5^{num}}{2^{floating}} $$
 
-* $num$: The number of pieces the player has in that line. The score increases exponentially as the player gets closer to $K$.
-* $floating$: Used primarily in Connect 4 mode, this counts how many empty cells in the line are "floating" (meaning they cannot be immediately played because the cells below them are also empty). A line requiring many floating pieces is much harder to complete, hence the penalty.
+**Modifiers to the line score:**
+* If $num = K - 1$ and there are no floating pieces, a player is 1 step away from an immediate win.
+* In Tic Tac Toe, this threat is tripled: $S = S \times 3$.
+* In Connect 4, a parity check is applied. Because pieces can only be played from the bottom up, an empty space on an *even* row from the bottom behaves very differently than an odd row depending on whose turn it is. If the row alignment matches the first-player advantage, the score is doubled: $S = S \times 2$. Otherwise, it gets a smaller bump: $S = S \times 1.25$.
 
-There are additional multipliers. For instance, if a player is just one piece away from winning ($num = K - 1$) and there are no floating pieces, the score is drastically multiplied to prioritize the immediate threat or win.
-
-Finally, the total accumulated score is scaled down into a range between $-1$ and $1$ to match the output range of the neural network using a hyperbolic tangent function:
+The raw board score is a sum of these line evaluations. It is then normalized and squeezed into a $[-1, 1]$ range using a hyperbolic tangent to match the range of the neural network:
 $$ Score_{final} = \tanh\left(\frac{S_{total}}{5^{K - 0.25}}\right) $$
 
-### Neural Network
+### Transposition Table & Search Details
 
-To supplement the rigid mathematical heuristic, a lightweight Neural Network (NN) is integrated. The architecture is straightforward:
-* **Input Layer**: Size $N \times N$, where each cell is passed as $1$ (current player), $-1$ (opponent), or $0$ (empty). Symmetries of the board are considered to feed the network a canonical, simplified representation.
-* **Hidden Layer**: Dynamically sized based on the board, using a leaky ReLU activation function.
-* **Output Layer**: A single output node returning a value between $-1$ and $1$ using a $\tanh$ activation function, predicting the evaluation score.
+A Transposition Table (TT) caches explored board states so they aren't recalculated.
+The TT stores:
+* The depth evaluated.
+* The score.
+* The flag indicating what the score represents (`exact` if fully evaluated, `lower` if a cut-off occurred causing a lower bound, and `upper` for an upper bound).
+* The best move found (used to extract the Principal Variation or PV).
 
-The AI is capable of online training. During training, batches of board states generated during self-play or user matches are evaluated. The backpropagation algorithm updates the weights and biases using gradient descent to minimize the error between the network's prediction and the actual final outcome of the game ($1$ for a win, $-1$ for a loss, $0$ for a draw).
+### Neural Network (NN) Integration
 
-When the user selects an **AI Ratio** between $0$ and $1$, the final evaluation blends the two approaches:
-$$ Score = Heuristic \times (1 - Ratio) + NN \times Ratio $$
+The heuristic alone cannot fully grasp complex strategic setups or long-term sacrifices, so it is paired with a neural network.
 
-### Quantization and Sharing
+* **Inputs**: The raw board configuration. X is passed as $1$, O as $-1$, and Empty as $0$. To accelerate learning, the board is canonicalized by rotating and flipping it through all 8 mathematical symmetries and passing the numerically smallest resulting board. This ensures structurally identical setups aren't learned twice.
+* **Hidden Layer**: A single hidden layer using Leaky ReLU. The size dynamically scales up based on the inputs to ensure enough capacity for larger boards.
+* **Output**: A single value passed through $\tanh$, projecting evaluation on the $[-1, 1]$ spectrum.
 
-To allow users to easily download, upload, or save the neural network's learned weights, a quantization method is used to compress the floating-point arrays into compact strings.
+The network performs backpropagation using Gradient Descent. When a game completes, it takes the sequence of moves made and applies the win value to the loss function, shifting its weights and biases to more accurately score similar configurations in the future.
 
-The quantization process finds the minimum and maximum weight values and maps the range to printable Unicode characters. Because standard Unicode provides thousands of distinct characters, a high degree of precision can be maintained while aggressively compressing the byte size of the network's "brain", making it small enough to store in local browser storage or a compact JSON file.
+The user interface slider allows a blend of standard math logic versus neural network learned logic:
+$$ Score_{blended} = Heuristic \times (1 - Ratio) + NN \times Ratio $$
+
+### String Quantization
+
+Rather than saving or sharing massive raw arrays of 32-bit floats, the weights of the AI are quantized into heavily compressed strings.
+The system identifies the absolute minimum float and the maximum float in the network's layers. It then partitions this range into distinct slices based on the number of available printable characters in Unicode (`0x20` space up to `0xD800` surrogate ranges). This yields over $55,264$ distinct points of precision.
+
+Each weight is converted into an integer index representing its "slice" and mapped to the corresponding Unicode character. A small header packs the `min` and `step` floats into the string, allowing rapid decompression when importing a saved model.
