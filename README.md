@@ -67,3 +67,62 @@ Somewhere around the end of 2025, I was visiting my relatives and saw my cousins
 While the classic 3x3 game is easily winnable or drawable, the other sizes are not. At the time, for some reason which I have now forgotten, I had either chess or Stockfish on my mind. I thought, why not build something similar to play Tic Tac Toe?
 
 Later on, I also added Connect-4. The game is pretty similar, so adding it didn't need many code changes.
+
+## How?
+
+The codebase is built using Angular and TypeScript. The logic is separated into an AI engine, a basic neural network, and a quantization utility, while the visual layer handles the user interface.
+
+### Game State and Engine
+
+The game engine relies on a mathematical abstraction to stay fast. The parameters $N$ (grid size) and $K$ (win condition) define the rules. Connect 4 functions as a variant of the standard game, simply enforcing a "gravity" rule where placing a piece automatically falls to the lowest available space in that column.
+
+To maintain extremely high performance during the deep analysis searches, the board state is packed into a 64-bit integer, known as a **bitboard**.
+Since a cell can be empty, an 'X', or an 'O', it requires two bits. This limits the maximum board size to $32$ cells using a single 64-bit integer. However, thanks to BigInt support in modern JavaScript, operations on the bitboard can scale up to larger sizes while remaining highly optimized using bitwise shifts and masks.
+
+Checking for a winner is accomplished elegantly through bitwise operations that scan the entire board for $K$ consecutive pieces horizontally, vertically, or diagonally in just a handful of iterations.
+
+### Search Algorithm: Negamax and Transposition Table
+
+The core search algorithm driving the AI is **Negamax**, a streamlined variant of Minimax. The Negamax algorithm recursively simulates future game states. It assumes both players are playing perfectly and attempts to maximize its own score while minimizing the opponent's.
+
+To prune the search tree and vastly improve performance, **Alpha-Beta pruning** is used. If a move is found to be worse than a previously examined move, the engine stops exploring that branch.
+
+Because many different sequences of moves can lead to the exact same board state, evaluating the same state repeatedly would be wasteful. To solve this, a **Transposition Table (TT)** is employed. The bitboard state acts as a unique key for the TT, which caches the depth analyzed, the score, and the best move found.
+When checking the TT, the score can be an exact value, a lower bound, or an upper bound depending on whether Alpha-Beta pruning previously cut off the search.
+
+When the search concludes, the optimal sequence of anticipated moves—the **Principal Variation (PV)**—is extracted by following the best moves cached in the Transposition Table.
+
+### Heuristic Evaluation
+
+When the search reaches its maximum depth limit before finding a definitive win or loss, it must estimate how favorable the position is. This is where the static heuristic evaluation function is used.
+
+The heuristic iterates over all possible winning lines on the board. For any line that contains only one player's pieces and empty spaces (meaning it could still become a winning line), it calculates a score based on how close it is to $K$ pieces.
+
+The formula for evaluating a single line is:
+$$ S = \frac{5^{num}}{2^{floating}} $$
+
+* $num$: The number of pieces the player has in that line. The score increases exponentially as the player gets closer to $K$.
+* $floating$: Used primarily in Connect 4 mode, this counts how many empty cells in the line are "floating" (meaning they cannot be immediately played because the cells below them are also empty). A line requiring many floating pieces is much harder to complete, hence the penalty.
+
+There are additional multipliers. For instance, if a player is just one piece away from winning ($num = K - 1$) and there are no floating pieces, the score is drastically multiplied to prioritize the immediate threat or win.
+
+Finally, the total accumulated score is scaled down into a range between $-1$ and $1$ to match the output range of the neural network using a hyperbolic tangent function:
+$$ Score_{final} = \tanh\left(\frac{S_{total}}{5^{K - 0.25}}\right) $$
+
+### Neural Network
+
+To supplement the rigid mathematical heuristic, a lightweight Neural Network (NN) is integrated. The architecture is straightforward:
+* **Input Layer**: Size $N \times N$, where each cell is passed as $1$ (current player), $-1$ (opponent), or $0$ (empty). Symmetries of the board are considered to feed the network a canonical, simplified representation.
+* **Hidden Layer**: Dynamically sized based on the board, using a leaky ReLU activation function.
+* **Output Layer**: A single output node returning a value between $-1$ and $1$ using a $\tanh$ activation function, predicting the evaluation score.
+
+The AI is capable of online training. During training, batches of board states generated during self-play or user matches are evaluated. The backpropagation algorithm updates the weights and biases using gradient descent to minimize the error between the network's prediction and the actual final outcome of the game ($1$ for a win, $-1$ for a loss, $0$ for a draw).
+
+When the user selects an **AI Ratio** between $0$ and $1$, the final evaluation blends the two approaches:
+$$ Score = Heuristic \times (1 - Ratio) + NN \times Ratio $$
+
+### Quantization and Sharing
+
+To allow users to easily download, upload, or save the neural network's learned weights, a quantization method is used to compress the floating-point arrays into compact strings.
+
+The quantization process finds the minimum and maximum weight values and maps the range to printable Unicode characters. Because standard Unicode provides thousands of distinct characters, a high degree of precision can be maintained while aggressively compressing the byte size of the network's "brain", making it small enough to store in local browser storage or a compact JSON file.
