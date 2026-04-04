@@ -291,30 +291,56 @@ export class Engine {
   }
 
   private evaluateHeuristic(player: Player): number {
-    const opponent = player ^ CELL_MASK;
+    const isFirstPlayer = // When no move has been made, moves.length === 0, even during negamax. This means, during the
+        // first negamax call, both players will behave as the first player even if a move has already been made. This
+        // is a bug, but keeps the code simple. Also, shouldn't be much of an issue for the first move, right? I hope!
+        this.moves.length === 0 || player === ((this.#bitboard >> BigInt(this.moves[0] * 2)) & CELL_MASK),
+      opponent = player ^ CELL_MASK;
 
     let score = 0;
     for (const [start, delta] of this.#allLines) {
       let numPlayer = 0,
         numOpponent = 0,
         floating = 0;
+      let lastEmptyPlayerPos = -1;
       for (let i = 0; i < this.K; ++i) {
         const pos = start + i * delta;
         const cell = (this.#bitboard >> BigInt(pos * 2)) & CELL_MASK;
         if (cell === player) ++numPlayer;
         else if (cell === opponent) ++numOpponent;
-        else if (!this.isValidPosInConnect4(pos)) ++floating;
+        else {
+          lastEmptyPlayerPos = pos;
+          if (!this.isValidPosInConnect4(pos)) ++floating;
+        }
       }
 
       // check winner
       if (numPlayer === this.K) return SCORE_WIN;
       if (numOpponent === this.K) return SCORE_LOSS;
 
-      if (numOpponent === 0 && numPlayer) score += 5 ** numPlayer / 2 ** floating;
-      else if (numPlayer === 0 && numOpponent) score -= 5 ** numOpponent / 2 ** floating;
+      if (numOpponent === 0 && numPlayer) {
+        let lineScore = 5 ** numPlayer / 2 ** floating;
+        if (numPlayer === this.K - 1 && floating === 0)
+          if (this.connect4) {
+            // The formula below counts last row from 1, but we count from 0. So if the value is odd, the last row is
+            // even for us.
+            const isLastRowEven = (this.N - Math.floor(lastEmptyPlayerPos / this.N)) % 2 === 1;
+            if (isFirstPlayer === isLastRowEven)
+              // (isFirstPlayer && isLastRowEven) || (!isFirstPlayer && !isLastRowEven)
+              lineScore *= 2;
+            else lineScore *= 1.25;
+          } else lineScore *= 3;
+        score += lineScore;
+      } else if (numPlayer === 0 && numOpponent) {
+        let lineScore = 5 ** numOpponent / 2 ** floating;
+        if (numOpponent === this.K - 1 && floating === 0)
+          // opponent has a winning line, penalize
+          lineScore *= 3;
+        score -= lineScore;
+      }
     }
 
-    return Math.tanh(score * 5 ** (1 - this.K)); // scale to NN range (-1 to 1)
+    return Math.tanh(score / 5 ** (this.K - 0.25)); // scale to NN range (-1 to 1)
   }
   private evaluateNN(player: Player): number {
     return this.nn.forward(this.getBoardForNN(player));
