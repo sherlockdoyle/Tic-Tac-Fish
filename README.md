@@ -206,3 +206,25 @@ Every floating-point weight $W_i$ is mapped into a base-55264 integer index, whi
 $$ Char_i = \text{String.fromCharCode}\left( \left\lfloor \frac{W_i - min}{step} \right\rfloor + \text{0x20} \right) $$
 
 To allow decompression later, the `min` and `step` values (two 32-bit floats) are packed into a single 64-bit header. That 64-bit integer is subsequently divided down by $55,264$ and written out as the first characters of the string. The rest of the string represents the array of weights.
+### Application Game Loop & Settings
+
+The UI interacts with the engine via several heuristic quality-of-life algorithms designed to make the AI feel dynamic and responsive to play.
+
+**AI Auto-Move (`numSteps`)**
+When `Auto AI` is enabled, the game calculates how many iterations ("steps") of Negamax search the AI should perform before acting. Because the search tree grows exponentially, a hardcoded iteration count would either be too fast on large boards or unplayably slow on small ones.
+The number of steps is computed via the experimentally derived formula:
+$$ Steps = \lfloor \frac{25.3125}{N} + 0.0625 \rceil $$
+If Connect 4 mode is enabled, this iteration count is doubled, giving the AI more time to think. The engine executes `doWork` this many times, yielding to the browser's main thread between iterations so the UI doesn't freeze.
+
+**Dynamic AI Ratio Updates**
+If `Update AI Ratio` is checked, the engine adjusts how much it relies on the Neural Network versus the math heuristic after every game. If the AI wins the game (i.e., the final winning move matches the AI's predicted `bestMove`), it assumes its current ratio configuration is good and slightly reinforces the Neural Network's influence.
+The ratio adjustment step is proportional:
+$$ step = \max(Ratio \times 0.1, 0.01) $$
+The $Ratio$ is incremented by $step$ if the AI won, and decremented by $step$ if the AI lost.
+
+**Dynamic Learning Rate (LR)**
+Similarly, the neural network's learning rate ($\eta$) adapts based on performance. If the AI wins consecutive games, it is performing well and the learning rate is reduced ($\eta_{new} = \eta_{old} \times 0.99$) to fine-tune the weights without drastically changing them. If it loses or draws, the learning rate is increased ($\eta_{new} = \eta_{old} \times 1.01$) to encourage faster adaptation and plasticity.
+
+**Scoremap Visualization**
+When `Show Scoremap` is enabled, every empty cell on the board is temporarily played, evaluated by the engine, and then reverted. The resulting scores are normalized for visual heat-mapping.
+To prevent the colors from looking washed out, the algorithm calculates the absolute maximum score ($absMax$). If all calculated moves are somewhat mediocre ($absMax < 0.75$), the $absMax$ is artificially doubled so the visual spectrum is stretched, making slight differences in move quality more visually distinct for the user.
