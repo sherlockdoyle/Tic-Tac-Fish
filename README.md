@@ -130,21 +130,42 @@ Because the 1D bitboard logically wraps from the end of one row to the beginning
 
 #### Example Algorithm
 
-For a given player, their isolated board is isolated using a player mask. Then, the $K-1$ iterations look like this:
+For a given player, their board is isolated using a player mask. To find if $K$ consecutive pieces exist, the isolated board undergoes $K-1$ shift and AND operations.
 
-```typescript
-let h = board, v = board, d = board, ad = board;
+Here is a visual example using a 1D line with $K=3$. A `1` represents the current player's piece. The same principle applies to all other directions (vertical, diagonal, anti-diagonal) by simply changing the shift distance.
 
-for (let i = 1; i < K && (h || v || d || ad); ++i) {
-    h &= (h >> hShift) & rightMask;
-    v &= (v >> vShift);
-    d &= (d >> dShift) & rightMask;
-    ad &= (ad >> adShift) & leftMask;
-}
-if (h || v || d || ad) return true; // Winner found
+```text
+Let K = 3. We require K - 1 = 2 iterations of shift and AND.
+
+Winning Board:  0 1 1 1 0
+-----------------------------------------
+Iteration 1
+Board:          0 1 1 1 0
+Shifted Board:    0 1 1 1 0
+AND Result:     0 0 1 1 0   (Pairs remain)
+
+Iteration 2
+Board:          0 0 1 1 0
+Shifted Board:    0 0 1 1 0
+AND Result:     0 0 0 1 0   (Triplets remain)
+
+Since the final result is non-zero, a winning line of 3 exists!
+
+
+Failing Board:  1 1 0 1 0
+-----------------------------------------
+Iteration 1
+Board:          1 1 0 1 0
+Shifted Board:    1 1 0 1 0
+AND Result:     0 1 0 0 0   (Only the first pair remains)
+
+Iteration 2
+Board:          0 1 0 0 0
+Shifted Board:    0 1 0 0 0
+AND Result:     0 0 0 0 0   (No triplets found)
+
+Since the final result is zero, no winning line of 3 exists.
 ```
-
-If any bits remain non-zero in `h`, `v`, `d`, or `ad` after the loop, a winning line of $K$ exists.
 
 ### Search Algorithm: Negamax and Transposition Table
 
@@ -166,10 +187,19 @@ Alpha-Beta pruning is exponentially faster when it evaluates the strongest moves
 
 1. **TT Best Move**: If the TT recorded a `bestMove` for the current state in a previous shallower search, it is checked first.
 2. **Adjacent Neighbors**: Moves immediately adjacent to an existing piece are investigated next. To find all neighbors instantaneously without loops, the engine utilizes a bitwise "smear".
-    * First, all occupied pieces (`occ`) are smeared horizontally to create `hSmear`:  
-    `hSmear = occ | ((occ & rightMask) << hShift) | ((occ & leftMask) >> hShift)`
-    * Then, `hSmear` is smeared vertically to identify all adjacent cells:  
-    `neighbors = hSmear | (hSmear << vShift) | (hSmear >> vShift)`
+    * First, all occupied pieces (`occ`) are smeared horizontally to create `hSmear`.
+    * Then, `hSmear` is smeared vertically to identify all adjacent cells.
+
+    Here is a visual example of the 2-step smear process on a 5x5 board. `X` represents an occupied piece, `-` is empty, and `*` is a newly smeared cell:
+    ```text
+    Initial Board     Horizontal Smear  Vertical Smear
+    (occ)             (hSmear)          (neighbors)
+    X - - - -         X * - - -         X * * * *
+    - - - X -   -->   - - * X *   -->   * * * X *
+    - - - - -         - - - - -         * * * * *
+    - X X - -         * X X * -         * X X * *
+    - - - - X         - - - * X         * * * * X
+    ```
 3. **Distance to Center**: Before the game begins, all board positions are pre-sorted based on their geometric squared distance to the center: $(x - \mathrm{center})^2 + (y - \mathrm{center})^2$. If a cell isn't a neighbor, it falls back to this ordering, inherently prioritizing central control.
 
 ### Heuristic Evaluation
