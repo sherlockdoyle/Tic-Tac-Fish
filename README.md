@@ -4,6 +4,20 @@
 
 ## How to Play & Controls
 
+### Initial Defaults
+
+On a fresh load, the app starts with:
+
+* Board Size: `N = 3`
+* Win Condition: `K = 3`
+* Connect 4: `connect4 = false`
+* AI Ratio: `nnRatio = 0.4`
+* Update AI Ratio: `updateAIRatio = true`
+* Train AI: `trainAI = true`
+* Show Scoremap: `showScoremap = false`
+* Auto AI: `autoAI = false`
+* Current Player: `X`
+
 ### Game Configuration Menu
 
 * **Board Size**: Change the size of the grid. You can play on the classic 3x3 board, or expand it all the way up to a massive 15x15 grid!
@@ -14,12 +28,12 @@
 
 ### AI and Advanced Settings
 
-* **AI Ratio**: This slider controls how "smart" the AI is by blending traditional heuristic logic with a Neural Network (NN). A ratio of `0` means it relies entirely on basic logic, while `1` means it relies fully on its learned neural network experience. Values in between blend the two approaches. The current learning rate (AI LR) is shown above the analysis button.
+* **AI Ratio**: This numeric input controls how "smart" the AI is by blending traditional heuristic logic with a Neural Network (NN). A ratio of `0` means it relies entirely on the heuristic, while `1` means it relies fully on the neural network. Values in between blend the two. The current learning rate (`AI LR`) is shown above the analysis button.
 * **Update AI Ratio**: If checked, the AI Ratio will automatically adjust itself as you play and as the AI learns from wins and losses.
 * **Train AI**: If checked, the AI learns from every finished game automatically, trying to get better over time. Leave this on to watch the AI adapt to your playstyle!
 * **Show Scoremap**: Checking this turns the game board into a heat-map! Cells will light up green for good moves and red for bad moves based on what the AI thinks.
 * **Auto AI**: When checked, the AI will automatically play its turn against you as soon as you make a move. The small text next to it shows how many "steps" or "thoughts" it takes per turn.
-* **Run Analysis**: Click this to force the AI to analyze the current board state and find the best move.
+* **Run Analysis**: Click this to force the AI to analyze the current board state and find the best move. Each call searches one depth deeper than the last search until the board/search state is reset.
 
 ### Info Section
 
@@ -43,7 +57,7 @@ Clicking the small three-dots button in the top-right of the controls opens a me
 * **Undo**: Take back the very last move made.
 * **Flip board**: Swaps all the pieces! Your pieces become the opponent's and vice-versa, and it swaps whose turn it is.
 * **Load 3x3 AI**: Instantly loads a pre-trained AI specifically for the classic 3x3 mode so you can play against an experienced opponent immediately.
-* **Download weights**: Saves the AI's current "brain" (neural network weights) as a JSON file to your computer.
+* **Download weights**: Saves the AI's current "brain" (neural network weights) as a JSON file to your computer. The filename format is `${N}_${K}${connect4 ? 'c' : ''}.json`, for example `3_3.json` or `7_4c.json`.
 * **Upload weights**: Load a previously saved AI brain file back into the game.
 * **Save to local storage**: Saves the AI's brain to your web browser so it remembers how to play even if you close the tab.
 * **Load from local storage**: Loads the saved AI brain from your web browser.
@@ -70,7 +84,7 @@ Later on, I also added Connect-4. The game is pretty similar, so adding it didn'
 
 ## How?
 
-The codebase is built using Angular and TypeScript. The underlying engine operates efficiently by packing board states into integers using bitwise math, relying a dynamic neural network for positional evaluation, and utilizing a custom algorithm for quantization.
+The codebase is built using Angular and TypeScript. The underlying engine operates efficiently by packing board states into integers using bitwise math, relying on a dynamic neural network for positional evaluation, and utilizing a custom algorithm for quantization.
 
 ### Game State and Engine
 
@@ -167,7 +181,7 @@ AND Result:     0 0 0 0 0   (No triplets found)
 Since the final result is zero, no winning line of 3 exists.
 ```
 
-### Search Algorithm: Negamax and Transposition Table
+### Search Algorithm (Negamax)
 
 The core search engine uses **Negamax** with **Alpha-Beta pruning**. Negamax simplifies Minimax by recognizing that $\max(a, b) = -\min(-a, -b)$, calculating the board score strictly from the perspective of the current player.
 
@@ -181,6 +195,10 @@ The TT uses the full $2N^2$-bit `bitboard` as the key. Each entry stores:
 * `flag`: Indicates if the score is exact (`exact`), bounded from below due to an alpha cutoff (`lower`), or bounded from above due to failing to exceed alpha (`upper`).
 * `bestMove`: The optimal move found, crucial for extracting the **Principal Variation (PV)** (the optimal predicted move sequence).
 
+#### Iterative Deepening
+
+The search does not jump directly to a fixed depth. Instead, each `doWork` call searches at the current depth, returns the result, and then increments the target depth by `1` for the next call. The transposition table is reused across these deeper passes, which makes repeated `Run Analysis` clicks and `Auto AI` iterations significantly cheaper than starting over from scratch every time. The search depth is reset when the board state changes or when the UI explicitly resets search state.
+
 #### Move Sorting Optimizations
 
 Alpha-Beta pruning is exponentially faster when it evaluates the strongest moves first. Move generation generates a legal move array prioritizing:
@@ -191,16 +209,18 @@ Alpha-Beta pruning is exponentially faster when it evaluates the strongest moves
     * Then, `hSmear` is smeared vertically to identify all adjacent cells.
 
     Here is a visual example of the 2-step smear process on a 5x5 board. `X` represents an occupied piece, `-` is empty, and `*` is a newly smeared cell:
+
     ```text
     Initial Board     Horizontal Smear  Vertical Smear
     (occ)             (hSmear)          (neighbors)
     X - - - -         X * - - -         X * * * *
-    - - - X -   -->   - - * X *   -->   * * * X *
-    - - - - -         - - - - -         * * * * *
+    - - - X -         - - * X *         * * * X *
+    - - - - X   -->   - - - * X   -->   * * * * X
     - X X - -         * X X * -         * X X * *
-    - - - - X         - - - * X         * * * * X
+    - - - - -         - - - - -         * * * * -
     ```
-3. **Distance to Center**: Before the game begins, all board positions are pre-sorted based on their geometric squared distance to the center: $(x - \mathrm{center})^2 + (y - \mathrm{center})^2$. If a cell isn't a neighbor, it falls back to this ordering, inherently prioritizing central control.
+
+3. **Distance to Center**: Before the game begins, all board positions are pre-sorted based on their geometric squared distance to the center: $(x - \mathrm{center})^2 + (y - \mathrm{center})^2$. Cells with the same distance are shuffled before sorting, so the overall ordering is center-first but randomized within equal-distance groups. If a cell isn't a neighbor, it falls back to this ordering, inherently prioritizing central control.
 
 ### Heuristic Evaluation
 
@@ -218,10 +238,11 @@ This exponentially rewards lines closer to completion, while heavily penalizing 
 If a player is one move away from a win ($\mathrm{num} = K - 1$) and the winning cell is not floating ($\mathrm{floating} = 0$), the threat is imminent.
 
 * In standard mode, the threat score is drastically scaled: $S = S \times 3$.
-* In Connect 4 mode, the multiplier depends on the parity of the empty cell's row. In Connect 4, due to the alternating turn structure, a threat on an odd row strongly favors the first player, while a threat on an even row favors the second player. If the empty cell's row parity aligns with the player's turn advantage, the threat is highly lethal and multiplied by $2$. Otherwise, it is only multiplied by $1.25$.
+* In Connect 4 mode, the parity-based multiplier is only used for the current player's imminent threat. If the empty cell's row parity aligns with that player's turn advantage, the line is multiplied by $2$; otherwise it is multiplied by $1.25$.
+* Opponent imminent threats are penalized more simply: the current implementation always applies a flat $\times 3$ penalty rather than the parity-based Connect 4 rule.
 
 Finally, the heuristic sums the scores of all lines for the current player, subtracts the sum of the opponent's lines, and squashes the result into the $[-1, 1]$ range using a hyperbolic tangent. To align the scale properly with $K$, a fractional constant is used:
-$$ \mathrm{Score}_\mathrm{final} = \tanh\left(\frac{Score_{total}}{5^{K - 0.25}}\right) $$
+$$ \mathrm{Score}_\mathrm{final} = \tanh\left(\frac{\mathrm{Score}_\mathrm{total}}{5^{K - 0.25}}\right) $$
 
 ### Neural Network Integration
 
@@ -235,13 +256,16 @@ Because the static mathematical heuristic struggles with long-term positional sa
 
 #### Training via Self-Play
 
-The AI supports live online training. It records the sequences of states visited during a match. When the game ends with a terminal condition (win = $1$, loss = $-1$, draw = $0$), it creates training batches.
+The AI supports live online training. When a game ends, the engine replays the full move list onto a fresh board, reconstructs every visited position from the perspective of the player who made that move, canonicalizes it through board symmetries, and assigns a target of win = $1$, loss = $-1$, or draw = $0$ based on the final result. Those samples are collected into training batches.
+
 The network updates its weights using Gradient Descent with Momentum. The gradients of the weights ($\nabla W$) are updated using:
 $$ V_t = \mu V_{t-1} - \eta \frac{1}{B} \sum_{b=1}^{B} \nabla W_b $$
 $$ W_{t+1} = W_t + V_t $$
-Where $\mu = 0.9$ (momentum), $\eta$ is the learning rate, and $B$ is the batch size.
+where $\mu = 0.9$ (momentum), $\eta$ is the learning rate, and $B$ is the batch size.
 
-When generating moves in the application, the user controls an "AI Ratio" slider (from $0$ to $1$) to dictate what percentage of the evaluation is driven by the network versus the static heuristic:
+After building that batch, the engine trains on the same collected positions `N` times, where `N` is the current board size.
+
+When generating moves in the application, the user controls an "AI Ratio" input (from $0$ to $1$) to dictate what percentage of the evaluation is driven by the network versus the static heuristic:
 $$ \mathrm{Score}_\mathrm{blended} = \mathrm{Heuristic} \times (1 - \mathrm{Ratio}) + \mathrm{NN} \times \mathrm{Ratio} $$
 
 ### Application Game Loop & Settings
@@ -251,6 +275,7 @@ The UI interacts with the engine via several heuristic quality-of-life algorithm
 #### AI Auto-Move (`numSteps`)
 
 When `Auto AI` is enabled, the game calculates how many iterations ("steps") of Negamax search the AI should perform before acting. Because the search tree grows exponentially, a hardcoded iteration count would either be too fast on small boards or unplayably slow on large ones.
+
 The number of steps is computed via the experimentally derived formula:
 $$ \mathrm{Steps} = \operatorname{round}\left( \frac{25.3125}{N} + 0.0625 \right) $$
 If Connect 4 mode is enabled, this iteration count is doubled, sinnce the search space is much smaller, giving the AI more time to think. The engine executes `doWork` this many times, yielding to the browser's main thread between iterations so the UI doesn't freeze.
@@ -258,6 +283,7 @@ If Connect 4 mode is enabled, this iteration count is doubled, sinnce the search
 #### Dynamic AI Ratio Updates
 
 If `Update AI Ratio` is checked, the engine adjusts how much it relies on the Neural Network versus the math heuristic after every game. If the AI wins the game (i.e., the final winning move matches the AI's predicted `bestMove`), it assumes its current ratio configuration is good and slightly reinforces the Neural Network's influence.
+
 The ratio adjustment step is proportional:
 $$ \mathrm{step} = \max(\mathrm{Ratio} \times 0.1, 0.01) $$
 The $\mathrm{Ratio}$ is incremented by $\mathrm{step}$ if the AI won, and decremented by $\mathrm{step}$ if the AI lost.
@@ -269,6 +295,7 @@ Similarly, the neural network's learning rate ($\eta$) adapts based on performan
 #### Scoremap Visualization
 
 When `Show Scoremap` is enabled, every empty cell on the board is temporarily played, evaluated by the engine, and then reverted. The resulting scores are normalized for visual heat-mapping.
+
 To prevent the colors from looking too deep, the algorithm calculates the absolute maximum score ($\mathrm{absMax}$) and divides all scores by it. If all calculated moves are somewhat mediocre ($\mathrm{absMax} < 0.75$), the $\mathrm{absMax}$ is artificially doubled so that after normalization, the highest score appears dull signifying a not-so-good move.
 
 ### AI Weight Quantization and Sharing
@@ -287,4 +314,4 @@ To allow decompression later, the `min` and `step` values (two 32-bit floats) ar
 
 ---
 
-**Note**: This documentation was generated with AI from the codebase. It has been manually verified and edited for correctness.
+**Note**: This documentation was generated with AI from the codebase. It has been manually verified and corrected.
