@@ -6,8 +6,7 @@
     "start": "ng serve",
     "build": "ng build",
     "deploy": "ng deploy --base-href=/Tic-Tac-Fish/",
-    "watch": "ng build --watch --configuration development",
-    "test": "ng test"
+    "watch": "ng build --watch --configuration development"
   },
   "private": true,
   "packageManager": "npm@11.7.0",
