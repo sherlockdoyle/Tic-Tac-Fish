@@ -1,22 +1,8 @@
-# Tic Tac Fish
+# <img src="public/favicon.svg" alt="Tic Tac Fish Icon" width="32" height="32" valign="bottom"> Tic Tac Fish
 
 **Tic Tac Fish** is like Stockfish, but for Tic Tac Toe!
 
 ## How to Play & Controls
-
-### Initial Defaults
-
-On a fresh load, the app starts with:
-
-* Board Size: `N = 3`
-* Win Condition: `K = 3`
-* Connect 4: `connect4 = false`
-* AI Ratio: `nnRatio = 0.4`
-* Update AI Ratio: `updateAIRatio = true`
-* Train AI: `trainAI = true`
-* Show Scoremap: `showScoremap = false`
-* Auto AI: `autoAI = false`
-* Current Player: `X`
 
 ### Game Configuration Menu
 
@@ -85,6 +71,20 @@ Later on, I also added Connect-4. The game is pretty similar, so adding it didn'
 ## How?
 
 The codebase is built using Angular and TypeScript. The underlying engine operates efficiently by packing board states into integers using bitwise math, relying on a dynamic neural network for positional evaluation, and utilizing a custom algorithm for quantization.
+
+### Initial Defaults
+
+On a fresh load, the app starts with:
+
+* Board Size: `N = 3`
+* Win Condition: `K = 3`
+* Connect 4: `connect4 = false`
+* AI Ratio: `nnRatio = 0.4`
+* Update AI Ratio: `updateAIRatio = true`
+* Train AI: `trainAI = true`
+* Show Scoremap: `showScoremap = false`
+* Auto AI: `autoAI = false`
+* Current Player: `X`
 
 ### Game State and Engine
 
