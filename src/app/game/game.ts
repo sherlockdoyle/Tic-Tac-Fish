@@ -104,8 +104,15 @@ export class Game {
   handleKeydown(event: KeyboardEvent) {
     const key = event.key.toLowerCase();
 
-    // checkboxes gets triggered by space
-    if (key === ' ' && event.target instanceof HTMLInputElement && event.target.type === 'checkbox') return;
+    if (
+      event.ctrlKey ||
+      event.altKey ||
+      event.shiftKey ||
+      event.metaKey ||
+      // checkboxes gets triggered by space
+      (key === ' ' && event.target instanceof HTMLInputElement && event.target.type === 'checkbox')
+    )
+      return;
 
     if (key === 'e' || key === 'r' || key === 'u' || key === 't' || key === 's' || key === 'a' || key === ' ')
       event.preventDefault();
@@ -223,6 +230,7 @@ export class Game {
   #weight3_3: Float32Array | null = null;
   async load3_3AI() {
     this.N = this.K = 3;
+    this.connect4 = false;
     this.updateConfig();
 
     if (!this.#weight3_3) this.#weight3_3 = new Float32Array((await import('../../assets/3_3.json')).default);

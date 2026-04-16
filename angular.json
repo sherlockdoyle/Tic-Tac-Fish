@@ -42,6 +42,7 @@
         "build": {
           "builder": "@angular/build:application",
           "options": {
+            "baseHref": "/Tic-Tac-Fish/",
             "browser": "src/main.ts",
             "tsConfig": "tsconfig.app.json",
             "inlineStyleLanguage": "scss",
@@ -90,9 +91,6 @@
             }
           },
           "defaultConfiguration": "development"
-        },
-        "deploy": {
-          "builder": "angular-cli-ghpages:deploy"
         }
       }
     }
