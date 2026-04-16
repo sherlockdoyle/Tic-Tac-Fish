@@ -188,6 +188,7 @@ The core search engine uses **Negamax** with **Alpha-Beta pruning**. Negamax sim
 #### Transposition Table (TT)
 
 Because different move orders lead to identical board configurations, a TT caches evaluations to prevent redundant work.
+
 The TT uses the full $2N^2$-bit `bitboard` as the key. Each entry stores:
 
 * `depth`: The remaining depth searched from this node.
@@ -230,7 +231,9 @@ When the Negamax search hits its maximum depth without finding a terminal state 
 * If a line is uncontested (contains $\mathrm{num}$ pieces of the current player and empty spaces), it is evaluated. For Connect 4 mode, empty spaces are further categorized. An empty space is "floating" if the space immediately below it is also empty, meaning it cannot be played in immediately.
 
 The base line score ($S$) is calculated as:
+
 $$ S = \frac{5^\mathrm{num}}{2^\mathrm{floating}} $$
+
 This exponentially rewards lines closer to completion, while heavily penalizing lines requiring multiple setup moves in Connect 4.
 
 #### Threat Modifiers
@@ -242,6 +245,7 @@ If a player is one move away from a win ($\mathrm{num} = K - 1$) and the winning
 * Opponent imminent threats are penalized more simply: the current implementation always applies a flat $\times 3$ penalty rather than the parity-based Connect 4 rule.
 
 Finally, the heuristic sums the scores of all lines for the current player, subtracts the sum of the opponent's lines, and squashes the result into the $[-1, 1]$ range using a hyperbolic tangent. To align the scale properly with $K$, a fractional constant is used:
+
 $$ \mathrm{Score}_\mathrm{final} = \tanh\left(\frac{\mathrm{Score}_\mathrm{total}}{5^{K - 0.25}}\right) $$
 
 ### Neural Network Integration
@@ -259,13 +263,16 @@ Because the static mathematical heuristic struggles with long-term positional sa
 The AI supports live online training. When a game ends, the engine replays the full move list onto a fresh board, reconstructs every visited position from the perspective of the player who made that move, canonicalizes it through board symmetries, and assigns a target of win = $1$, loss = $-1$, or draw = $0$ based on the final result. Those samples are collected into training batches.
 
 The network updates its weights using Gradient Descent with Momentum. The gradients of the weights ($\nabla W$) are updated using:
-$$ V_t = \mu V_{t-1} - \eta \frac{1}{B} \sum_{b=1}^{B} \nabla W_b $$
+
+$$ V_t = \mu V_{t-1} - \eta \frac{1}{B} \sum_{b=1}^{B} \nabla W_b $$  
 $$ W_{t+1} = W_t + V_t $$
+
 where $\mu = 0.9$ (momentum), $\eta$ is the learning rate, and $B$ is the batch size.
 
 After building that batch, the engine trains on the same collected positions `N` times, where `N` is the current board size.
 
 When generating moves in the application, the user controls an "AI Ratio" input (from $0$ to $1$) to dictate what percentage of the evaluation is driven by the network versus the static heuristic:
+
 $$ \mathrm{Score}_\mathrm{blended} = \mathrm{Heuristic} \times (1 - \mathrm{Ratio}) + \mathrm{NN} \times \mathrm{Ratio} $$
 
 ### Application Game Loop & Settings
@@ -277,7 +284,9 @@ The UI interacts with the engine via several heuristic quality-of-life algorithm
 When `Auto AI` is enabled, the game calculates how many iterations ("steps") of Negamax search the AI should perform before acting. Because the search tree grows exponentially, a hardcoded iteration count would either be too fast on small boards or unplayably slow on large ones.
 
 The number of steps is computed via the experimentally derived formula:
-$$ \mathrm{Steps} = \operatorname{round}\left( \frac{25.3125}{N} + 0.0625 \right) $$
+
+$$ \mathrm{Steps} = \mathrm{round}\left( \frac{25.3125}{N} + 0.0625 \right) $$
+
 If Connect 4 mode is enabled, this iteration count is doubled, sinnce the search space is much smaller, giving the AI more time to think. The engine executes `doWork` this many times, yielding to the browser's main thread between iterations so the UI doesn't freeze.
 
 #### Dynamic AI Ratio Updates
@@ -285,7 +294,9 @@ If Connect 4 mode is enabled, this iteration count is doubled, sinnce the search
 If `Update AI Ratio` is checked, the engine adjusts how much it relies on the Neural Network versus the math heuristic after every game. If the AI wins the game (i.e., the final winning move matches the AI's predicted `bestMove`), it assumes its current ratio configuration is good and slightly reinforces the Neural Network's influence.
 
 The ratio adjustment step is proportional:
+
 $$ \mathrm{step} = \max(\mathrm{Ratio} \times 0.1, 0.01) $$
+
 The $\mathrm{Ratio}$ is incremented by $\mathrm{step}$ if the AI won, and decremented by $\mathrm{step}$ if the AI lost.
 
 #### Dynamic Learning Rate (LR)
@@ -305,9 +316,11 @@ To allow users to store the neural network's learned behavior in local storage w
 The standard printable Unicode characters range from `0x20` (Space) up to `0xD800` (the start of the surrogate pairs). This yields a `RANGE` of exactly $55,264$ distinct integer values per character.
 
 The algorithm calculates the global minimum (`min`) and maximum (`max`) of the entire weight array and determines a fixed scaling `step`:
+
 $$ \mathrm{step} = \frac{\mathrm{max} - \mathrm{min}}{\mathrm{RANGE}} $$
 
 Every floating-point weight $W_i$ is mapped into a base-55264 integer index, which is then mapped to its corresponding Unicode character:
+
 $$ \mathrm{Char}_i = \texttt{String.fromCharCode}\left( \left\lfloor \frac{W_i - \mathrm{min}}{\mathrm{step}} \right\rfloor + \text{0x20} \right) $$
 
 To allow decompression later, the `min` and `step` values (two 32-bit floats) are packed into a single 64-bit header. That 64-bit integer is subsequently divided down by $55,264$ and written out as the first characters of the string. The rest of the string represents the array of weights.
